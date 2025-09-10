@@ -24,7 +24,7 @@ class WelcomeActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 Log.d(TAG, "Back pressed: finishing welcomed and welcome activities")
-                (application as? WelcomeApplication)?.finshWelcomed()
+                (application as? WelcomeApplication)?.finishWelcomedActivity()
                 finish()
             }
         })
@@ -32,7 +32,7 @@ class WelcomeActivity : AppCompatActivity() {
 
     fun mellon() {
         Log.d(TAG, "Proceeding past welcome")
-        (application as? WelcomeApplication)?.proceedPastWelcome()
+        (application as? WelcomeApplication)?.startWelcomedActivityFrom(this)
         finish()
     }
 

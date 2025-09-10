@@ -8,36 +8,54 @@ import android.util.Log
 import java.lang.ref.WeakReference
 
 class WelcomeApplication : Application() {
-
-    private var welcomedActivityReference: WeakReference<Activity>? = null
-
-    override fun onCreate() {
-        super.onCreate()
-        registerActivityLifecycleCallbacks(activityWelcomingCallbacks)
-        Log.d(TAG, "WelcomeApplication created and lifecycle callbacks registered")
+    private class WelcomingState(
+        private val activityReference: WeakReference<Activity>,
+        val intent: Intent,
+    ) {
+        val activity get() = activityReference.get()
     }
+
+    @Volatile
+    private var welcomingState: WelcomingState? = null
 
     private val activityWelcomingCallbacks = object : ActivityLifecycleCallbacks {
         override fun onActivityPreCreated(activity: Activity, savedInstanceState: Bundle?) {
-            // Skip welcoming the welcome activity itself
-            if (activity is WelcomeActivity) return
-
-            val originalIntent = activity.intent
-
-            // Skip if already welcomed
-            if (originalIntent.getBooleanExtra(FROM_WELCOME, false)) return
-
-            // Avoid double-welcoming the same instance
-            if (welcomedActivityReference?.get() === activity) {
-                Log.d(TAG, "Already welcoming (layer) ${activity.localClassName}, skipping")
-                return
+            if (shouldWelcome(activity, savedInstanceState)) {
+                welcome(activity)
             }
+        }
 
-            welcomedActivityReference = WeakReference(activity)
-            Log.d(TAG, "Welcoming (layer) ${activity.localClassName}")
+        private fun shouldWelcome(activity: Activity, savedInstanceState: Bundle?) =
+            savedInstanceState == null /* not a recreation */ &&
+                    activity !is WelcomeActivity &&
+                    !activity.intent.getBooleanExtra(WAS_WELCOMED, false) &&
+                    welcomingState?.activity !== activity
+
+        private fun welcome(activity: Activity) {
+            Log.d(TAG, "Welcoming ${activity.localClassName}")
+            welcomingState = WelcomingState(
+                activityReference = WeakReference(activity),
+                intent = activity.intent.sanitizeForWelcome()
+            )
             val welcomeIntent = Intent(activity, WelcomeActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            activity.startActivity(welcomeIntent)
+            activity.startActivity(welcomeIntent, null)
+            activity.finish()
+        }
+
+        private fun Intent.sanitizeForWelcome() = Intent(this).apply {
+            // Clear launcher action and category, if present
+            if (action == Intent.ACTION_MAIN) {
+                action = null
+            }
+            removeCategory(Intent.CATEGORY_LAUNCHER)
+
+            // Remove flags that can cause task reshuffling when replayed
+            val strip = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
+                    Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT
+            flags = flags and strip.inv()
+
+            putExtra(WAS_WELCOMED, true)
         }
 
         override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
@@ -65,26 +83,37 @@ class WelcomeApplication : Application() {
         }
 
         override fun onActivityDestroyed(activity: Activity) {
-            if (welcomedActivityReference?.get() === activity) welcomedActivityReference = null
+            if (welcomingState?.activity === activity &&
+                activity.intent.getBooleanExtra(WAS_WELCOMED, false)
+            ) {
+                welcomingState = null
+            }
             Log.d(TAG, "Destroyed: ${activity.localClassName}")
         }
     }
 
-    fun proceedPastWelcome() {
-        val activity = welcomedActivityReference?.get() ?: return
-        activity.startActivity(activity.intent.putExtra(FROM_WELCOME, true))
-        welcomedActivityReference = null
+    override fun onCreate() {
+        super.onCreate()
+        registerActivityLifecycleCallbacks(activityWelcomingCallbacks)
+        Log.d(TAG, "WelcomeApplication created and lifecycle callbacks registered")
     }
 
-    fun finshWelcomed() {
-        welcomedActivityReference?.get()?.apply {
+    fun startWelcomedActivityFrom(activity: Activity) {
+        welcomingState?.intent?.also {
+            activity.startActivity(it)
+            welcomingState = null
+        }
+    }
+
+    fun finishWelcomedActivity() {
+        welcomingState?.activity?.apply {
             if (!isFinishing) finish()
         }
-        welcomedActivityReference = null
+        welcomingState = null
     }
 
     companion object {
         private const val TAG = "WelcomeApplication"
-        private const val FROM_WELCOME = "from_welcome"
+        private const val WAS_WELCOMED = "was_welcomed"
     }
 }
